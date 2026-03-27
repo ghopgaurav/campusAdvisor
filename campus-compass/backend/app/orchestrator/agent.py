@@ -16,7 +16,8 @@ from app.schemas.chat import ChatRequest, ChatResponse, ToolUsageInfo
 
 logger = logging.getLogger(__name__)
 
-_client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+def _get_client() -> anthropic.AsyncAnthropic:
+    return anthropic.AsyncAnthropic(api_key=settings.require_anthropic_key())
 
 
 def _build_messages(request: ChatRequest) -> list[dict[str, Any]]:
@@ -64,7 +65,7 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     while tool_calls_made <= settings.MAX_TOOL_CALLS_PER_TURN:
         logger.debug("Agent loop iteration %d", tool_calls_made)
 
-        response = await _client.messages.create(
+        response = await _get_client().messages.create(
             model=settings.ANTHROPIC_MODEL,
             max_tokens=4096,
             system=system_prompt,
@@ -113,7 +114,13 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
                 # Track for response metadata
                 tools_used.append(ToolUsageInfo(
                     tool_name=block.name,
-                    query=block.input.get("query") or block.input.get("url") or block.input.get("city"),
+                    query=(
+                        block.input.get("query")
+                        or block.input.get("name")      # search_us_universities uses "name"
+                        or block.input.get("city")
+                        or str(block.input.get("scorecard_id", ""))
+                        or block.input.get("url")
+                    ),
                     source_url=block.input.get("url"),
                 ))
 
@@ -137,7 +144,7 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
         "role": "user",
         "content": "Please provide your best answer based on what you've gathered so far.",
     })
-    final_response = await _client.messages.create(
+    final_response = await _get_client().messages.create(
         model=settings.ANTHROPIC_MODEL,
         max_tokens=4096,
         system=system_prompt,

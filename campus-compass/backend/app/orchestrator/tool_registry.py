@@ -7,43 +7,24 @@ import json
 import logging
 from typing import Any
 
+from app.config import settings
 from app.tools.cost_of_living import get_cost_of_living
 from app.tools.page_fetcher import fetch_page
 from app.tools.reddit_search import reddit_search
-from app.tools.scorecard import search_colleges
+from app.tools.scorecard import execute as scorecard_execute, get_tool_definitions as scorecard_tool_defs
 from app.tools.web_search import web_search
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Anthropic tool definitions (passed to the API in the `tools` parameter)
+# Aggregate tool definitions from all tool modules
 # ---------------------------------------------------------------------------
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
-    {
-        "name": "college_scorecard",
-        "description": (
-            "Search the US Department of Education College Scorecard database for information "
-            "about colleges and universities: tuition, admission rates, graduation rates, "
-            "student body size, average earnings of graduates, and more. "
-            "Best for factual institutional data about US schools."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "School name to search for (e.g. 'MIT', 'Carnegie Mellon University').",
-                },
-                "per_page": {
-                    "type": "integer",
-                    "description": "Number of results to return (default 5, max 10).",
-                    "default": 5,
-                },
-            },
-            "required": ["query"],
-        },
-    },
+    # --- Scorecard: search_us_universities + get_university_details ---
+    *scorecard_tool_defs(),
+
+    # --- Page fetcher ---
     {
         "name": "fetch_page",
         "description": (
@@ -62,6 +43,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["url"],
         },
     },
+
+    # --- Web search ---
     {
         "name": "web_search",
         "description": (
@@ -85,6 +68,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["query"],
         },
     },
+
+    # --- Cost of living ---
     {
         "name": "cost_of_living",
         "description": (
@@ -108,6 +93,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["city"],
         },
     },
+
+    # --- Reddit search ---
     {
         "name": "reddit_search",
         "description": (
@@ -153,6 +140,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 # Tool dispatcher
 # ---------------------------------------------------------------------------
 
+_SCORECARD_TOOLS = {"search_us_universities", "get_university_details"}
+
 
 async def dispatch_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
     """
@@ -161,41 +150,39 @@ async def dispatch_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
     """
     logger.info("Dispatching tool: %s | input: %s", tool_name, tool_input)
 
-    try:
-        if tool_name == "college_scorecard":
-            result = await search_colleges(
-                query=tool_input["query"],
-                per_page=tool_input.get("per_page", 5),
-            )
+    if tool_name in _SCORECARD_TOOLS:
+        return await scorecard_execute(
+            tool_name=tool_name,
+            tool_input=tool_input,
+            api_key=settings.require_scorecard_key(),
+        )
 
-        elif tool_name == "fetch_page":
-            result = await fetch_page(url=tool_input["url"])
+    if tool_name == "fetch_page":
+        result = await fetch_page(url=tool_input["url"])
+        return json.dumps(result, default=str)
 
-        elif tool_name == "web_search":
-            result = await web_search(
-                query=tool_input["query"],
-                max_results=tool_input.get("max_results", 6),
-            )
+    if tool_name == "web_search":
+        result = await web_search(
+            query=tool_input["query"],
+            max_results=tool_input.get("max_results", 6),
+        )
+        return json.dumps(result, default=str)
 
-        elif tool_name == "cost_of_living":
-            result = await get_cost_of_living(
-                city=tool_input["city"],
-                country=tool_input.get("country", "United States"),
-            )
+    if tool_name == "cost_of_living":
+        result = await get_cost_of_living(
+            city=tool_input["city"],
+            country=tool_input.get("country", "United States"),
+        )
+        return json.dumps(result, default=str)
 
-        elif tool_name == "reddit_search":
-            result = await reddit_search(
-                query=tool_input["query"],
-                subreddits=tool_input.get("subreddits"),
-                sort=tool_input.get("sort", "relevance"),
-                time_filter=tool_input.get("time_filter", "year"),
-            )
+    if tool_name == "reddit_search":
+        result = await reddit_search(
+            query=tool_input["query"],
+            subreddits=tool_input.get("subreddits"),
+            sort=tool_input.get("sort", "relevance"),
+            time_filter=tool_input.get("time_filter", "year"),
+        )
+        return json.dumps(result, default=str)
 
-        else:
-            result = {"error": f"Unknown tool: {tool_name}"}
-
-    except Exception as exc:
-        logger.exception("Tool %s raised an exception: %s", tool_name, exc)
-        result = {"error": f"Tool execution failed: {exc}"}
-
-    return json.dumps(result, default=str)
+    logger.warning("Unknown tool requested: %s", tool_name)
+    return json.dumps({"error": f"Unknown tool: {tool_name}"})
