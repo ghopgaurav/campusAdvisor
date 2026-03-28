@@ -14,15 +14,13 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
-import anthropic
+from anthropic import AsyncAnthropicBedrock
 import httpx
 from bs4 import BeautifulSoup, Tag
 from readability import Document
 
 logger = logging.getLogger(__name__)
 
-# Haiku is used for extraction — cheaper and fast enough for structured JSON tasks
-_EXTRACTION_MODEL = "claude-haiku-4-5-20251001"
 _MAX_CONTENT_CHARS = 6000
 
 # ---------------------------------------------------------------------------
@@ -267,7 +265,8 @@ def _clean_html_to_text(html: str, url: str) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 class PageFetcherTool:
-    def __init__(self, anthropic_api_key: str) -> None:
+    def __init__(self, config) -> None:
+        access_key, secret_key = config.require_aws_credentials()
         self.http_client = httpx.AsyncClient(
             timeout=20.0,
             headers={
@@ -276,7 +275,12 @@ class PageFetcherTool:
             },
             follow_redirects=True,
         )
-        self.anthropic_client = anthropic.AsyncAnthropic(api_key=anthropic_api_key)
+        self.anthropic_client = AsyncAnthropicBedrock(
+            aws_access_key=access_key,
+            aws_secret_key=secret_key,
+            aws_region=config.AWS_REGION,
+        )
+        self._extraction_model = config.ANTHROPIC_MODEL_CHEAP
 
     async def fetch_and_extract(
         self,
@@ -347,7 +351,7 @@ class PageFetcherTool:
 
         try:
             llm_resp = await self.anthropic_client.messages.create(
-                model=_EXTRACTION_MODEL,
+                model=self._extraction_model,
                 max_tokens=1024,
                 system=system,
                 messages=[{"role": "user", "content": user_message}],
@@ -463,12 +467,12 @@ def get_tool_definition() -> dict[str, Any]:
 # Executor — called by the agent's tool dispatcher
 # ---------------------------------------------------------------------------
 
-async def execute(tool_name: str, tool_input: dict[str, Any], anthropic_api_key: str) -> str:
+async def execute(tool_name: str, tool_input: dict[str, Any], config) -> str:
     """
     Execute the fetch_university_page tool and return a JSON string for Claude.
     Errors are returned as JSON so the agent can communicate them to the user.
     """
-    tool = PageFetcherTool(anthropic_api_key=anthropic_api_key)
+    tool = PageFetcherTool(config=config)
     try:
         result = await tool.fetch_and_extract(
             url=tool_input["url"],

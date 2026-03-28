@@ -145,7 +145,7 @@ async def dispatch_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
         return await page_fetcher_execute(
             tool_name=tool_name,
             tool_input=tool_input,
-            anthropic_api_key=settings.require_anthropic_key(),
+            config=settings,
         )
 
     if tool_name == "web_search":

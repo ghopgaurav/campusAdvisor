@@ -33,5 +33,11 @@ async def health_check() -> dict:
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    logger.info("Campus Compass API is running")
-    logger.info("Model: %s", settings.ANTHROPIC_MODEL)
+    logger.info("Campus Compass API is running (via AWS Bedrock)")
+    logger.info("Main model:  %s", settings.ANTHROPIC_MODEL)
+    logger.info("Cheap model: %s", settings.ANTHROPIC_MODEL_CHEAP)
+    logger.info("AWS region:  %s", settings.AWS_REGION)
+    if not settings.AWS_ACCESS_KEY_ID or not settings.AWS_SECRET_ACCESS_KEY:
+        logger.warning("AWS credentials not set — chat requests will fail until added to .env")
+    if not settings.SCORECARD_API_KEY:
+        logger.warning("SCORECARD_API_KEY is not set — college_scorecard tool will fail until it is added to .env")

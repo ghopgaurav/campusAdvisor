@@ -7,7 +7,7 @@ Runs the Claude agentic loop: send message → receive tool calls → execute to
 import logging
 from typing import Any
 
-import anthropic
+from anthropic import AsyncAnthropicBedrock
 
 from app.config import settings
 from app.orchestrator.system_prompt import build_system_prompt, format_student_profile
@@ -16,8 +16,13 @@ from app.schemas.chat import ChatRequest, ChatResponse, ToolUsageInfo
 
 logger = logging.getLogger(__name__)
 
-def _get_client() -> anthropic.AsyncAnthropic:
-    return anthropic.AsyncAnthropic(api_key=settings.require_anthropic_key())
+def _get_client() -> AsyncAnthropicBedrock:
+    access_key, secret_key = settings.require_aws_credentials()
+    return AsyncAnthropicBedrock(
+        aws_access_key=access_key,
+        aws_secret_key=secret_key,
+        aws_region=settings.AWS_REGION,
+    )
 
 
 def _build_messages(request: ChatRequest) -> list[dict[str, Any]]:
