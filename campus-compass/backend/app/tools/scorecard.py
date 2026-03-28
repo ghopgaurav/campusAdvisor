@@ -18,7 +18,10 @@ BASE_URL = "https://api.data.gov/ed/collegescorecard/v1/schools"
 # Delay between calls to be a good citizen (API is generous but rate-limited)
 _RATE_LIMIT_DELAY = 0.1
 
-# Fields requested on every search query
+# Fields requested on every search query.
+# NOTE: latest.programs.cip_4_digit is intentionally excluded here — the API
+# returns 400 when that nested array field is combined with sort/filter params.
+# It is fetched only in the detail endpoint where no sort is applied.
 _SEARCH_FIELDS = ",".join([
     "id",
     "school.name",
@@ -35,7 +38,6 @@ _SEARCH_FIELDS = ",".join([
     "latest.cost.tuition.out_of_state",
     "latest.cost.avg_net_price.overall",
     "latest.student.grad_students",
-    "latest.programs.cip_4_digit",
 ])
 
 # Additional fields for the detail endpoint
@@ -116,7 +118,6 @@ def _parse_institution(raw: dict) -> dict:
         "in_state_tuition": raw.get("latest.cost.tuition.in_state"),
         "out_of_state_tuition": raw.get("latest.cost.tuition.out_of_state"),
         "avg_net_price": raw.get("latest.cost.avg_net_price.overall"),
-        "programs_sample": _parse_programs(raw.get("latest.programs.cip_4_digit")),
     }
 
 
@@ -185,8 +186,6 @@ class ScorecardTool:
             "fields": _SEARCH_FIELDS,
             "_page": page,
             "_per_page": per_page,
-            # Always restrict to bachelor's-granting institutions and above
-            "school.degrees_awarded.predominant__range": "2..4",
         }
 
         if name:
@@ -199,8 +198,9 @@ class ScorecardTool:
             params["latest.cost.tuition.out_of_state__min"] = min_tuition
         if max_acceptance_rate is not None:
             params["latest.admissions.admission_rate.overall__max"] = max_acceptance_rate
-        if has_graduate_programs:
-            params["latest.student.grad_students__min"] = 1
+        # Note: latest.student.grad_students is not an indexed field — cannot filter on it.
+        # The graduate_enrollment value is still returned in results for Claude to reason about.
+        _ = has_graduate_programs  # accepted in schema, not applied as an API filter
         if ownership:
             ownership_code = _OWNERSHIP_INPUT_MAP.get(ownership.lower())
             if ownership_code:
