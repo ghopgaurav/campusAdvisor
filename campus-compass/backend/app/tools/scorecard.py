@@ -40,8 +40,11 @@ _SEARCH_FIELDS = ",".join([
     "latest.student.grad_students",
 ])
 
-# Additional fields for the detail endpoint
+# Additional fields for the detail endpoint.
+# latest.programs.cip_4_digit is only requested here (not in search) because
+# including it alongside sort/filter params causes a 400 from the API.
 _DETAIL_EXTRA_FIELDS = ",".join([
+    "latest.programs.cip_4_digit",
     "school.locale",
     "school.carnegie_basic",
     "latest.admissions.sat_scores.average.overall",
@@ -118,6 +121,10 @@ def _parse_institution(raw: dict) -> dict:
         "in_state_tuition": raw.get("latest.cost.tuition.in_state"),
         "out_of_state_tuition": raw.get("latest.cost.tuition.out_of_state"),
         "avg_net_price": raw.get("latest.cost.avg_net_price.overall"),
+        # programs_sample is always empty on search results — the Scorecard API
+        # returns 400 when latest.programs.cip_4_digit is combined with sort/filter.
+        # Use get_university_details (programs_full) for the actual program list.
+        "programs_sample": [],
     }
 
 
@@ -198,9 +205,12 @@ class ScorecardTool:
             params["latest.cost.tuition.out_of_state__min"] = min_tuition
         if max_acceptance_rate is not None:
             params["latest.admissions.admission_rate.overall__max"] = max_acceptance_rate
-        # Note: latest.student.grad_students is not an indexed field — cannot filter on it.
-        # The graduate_enrollment value is still returned in results for Claude to reason about.
-        _ = has_graduate_programs  # accepted in schema, not applied as an API filter
+        # latest.student.grad_students is not an indexed/filterable field in the Scorecard API.
+        # has_graduate_programs is accepted in the schema and noted to Claude in the description,
+        # but cannot be enforced at the API level. graduate_enrollment is still returned in
+        # every result so Claude can filter or reason about it from the response.
+        if has_graduate_programs:
+            logger.debug("has_graduate_programs requested but cannot be applied as API filter")
         if ownership:
             ownership_code = _OWNERSHIP_INPUT_MAP.get(ownership.lower())
             if ownership_code:
@@ -255,13 +265,31 @@ class ScorecardTool:
           11 = Computer Science, 14 = Engineering, 26 = Biology,
           27 = Math/Stats, 52 = Business, 13 = Education,
           51 = Health Professions, 40 = Physical Sciences
+
+        NOTE: The Scorecard API does not support filtering by CIP code as a query
+        parameter (latest.programs.cip_4_digit is a nested array field and causes
+        400 errors when used in filter or sort contexts). This method therefore
+        returns a broad set of institutions with graduate programs in the given
+        state/tuition range. The caller (Claude) should use get_institution_detail
+        on candidates of interest to inspect their actual program lists.
         """
-        return await self.search_institutions(
+        logger.info(
+            "search_programs_by_cip: cip_prefix=%r — note: CIP filtering applied post-fetch only",
+            cip_prefix,
+        )
+        result = await self.search_institutions(
             state=state,
             max_tuition=max_tuition,
             has_graduate_programs=True,
             per_page=15,
         )
+        # Attach the requested CIP prefix so Claude knows what was asked for
+        result["requested_cip_prefix"] = cip_prefix
+        result["cip_filter_note"] = (
+            "The Scorecard API does not support server-side CIP filtering. "
+            "Use get_university_details on individual results to verify program offerings."
+        )
+        return result
 
 
 # ---------------------------------------------------------------------------
