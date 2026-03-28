@@ -9,7 +9,7 @@ from typing import Any
 
 from app.config import settings
 from app.tools.cost_of_living import get_cost_of_living
-from app.tools.page_fetcher import fetch_page
+from app.tools.page_fetcher import execute as page_fetcher_execute, get_tool_definition as page_fetcher_tool_def
 from app.tools.reddit_search import reddit_search
 from app.tools.scorecard import execute as scorecard_execute, get_tool_definitions as scorecard_tool_defs
 from app.tools.web_search import web_search
@@ -24,25 +24,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     # --- Scorecard: search_us_universities + get_university_details ---
     *scorecard_tool_defs(),
 
-    # --- Page fetcher ---
-    {
-        "name": "fetch_page",
-        "description": (
-            "Fetch and extract the main text content from a URL. Use this to read program pages, "
-            "admissions requirements, deadlines, faculty profiles, and other university web pages. "
-            "Returns the title and readable body text of the page."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "The full URL of the page to fetch (must be http or https).",
-                },
-            },
-            "required": ["url"],
-        },
-    },
+    # --- Page fetcher: fetch_university_page ---
+    page_fetcher_tool_def(),
 
     # --- Web search ---
     {
@@ -141,6 +124,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 # ---------------------------------------------------------------------------
 
 _SCORECARD_TOOLS = {"search_us_universities", "get_university_details"}
+_PAGE_FETCHER_TOOLS = {"fetch_university_page"}
 
 
 async def dispatch_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
@@ -157,9 +141,12 @@ async def dispatch_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
             api_key=settings.require_scorecard_key(),
         )
 
-    if tool_name == "fetch_page":
-        result = await fetch_page(url=tool_input["url"])
-        return json.dumps(result, default=str)
+    if tool_name in _PAGE_FETCHER_TOOLS:
+        return await page_fetcher_execute(
+            tool_name=tool_name,
+            tool_input=tool_input,
+            anthropic_api_key=settings.require_anthropic_key(),
+        )
 
     if tool_name == "web_search":
         result = await web_search(
