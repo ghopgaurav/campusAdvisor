@@ -12,7 +12,7 @@ from app.tools.cost_of_living import get_cost_of_living
 from app.tools.page_fetcher import execute as page_fetcher_execute, get_tool_definition as page_fetcher_tool_def
 from app.tools.reddit_search import reddit_search
 from app.tools.scorecard import execute as scorecard_execute, get_tool_definitions as scorecard_tool_defs
-from app.tools.web_search import web_search
+from app.tools.web_search import execute as web_search_execute, get_tool_definition as web_search_tool_def
 
 logger = logging.getLogger(__name__)
 
@@ -28,29 +28,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     page_fetcher_tool_def(),
 
     # --- Web search ---
-    {
-        "name": "web_search",
-        "description": (
-            "Search the web for current information about universities, programs, rankings, "
-            "news, and anything else. Use this when you need up-to-date or time-sensitive "
-            "information that may not be in your training data."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query (be specific for better results).",
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum number of results to return (default 6).",
-                    "default": 6,
-                },
-            },
-            "required": ["query"],
-        },
-    },
+    web_search_tool_def(),
 
     # --- Cost of living ---
     {
@@ -125,6 +103,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 
 _SCORECARD_TOOLS = {"search_us_universities", "get_university_details"}
 _PAGE_FETCHER_TOOLS = {"fetch_university_page"}
+_WEB_SEARCH_TOOLS = {"web_search"}
 
 
 async def dispatch_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
@@ -148,12 +127,8 @@ async def dispatch_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
             config=settings,
         )
 
-    if tool_name == "web_search":
-        result = await web_search(
-            query=tool_input["query"],
-            max_results=tool_input.get("max_results", 6),
-        )
-        return json.dumps(result, default=str)
+    if tool_name in _WEB_SEARCH_TOOLS:
+        return await web_search_execute(tool_name=tool_name, tool_input=tool_input)
 
     if tool_name == "cost_of_living":
         result = await get_cost_of_living(

@@ -8,3 +8,4 @@ anthropic[bedrock]
 beautifulsoup4
 lxml
 readability-lxml
+ddgs
