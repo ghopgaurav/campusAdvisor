@@ -154,7 +154,7 @@ export default function ProfilePanel({
                 </div>
               </div>
 
-              <Field label="Undergraduate Institution" placeholder="e.g. IIT Bombay">
+              <Field label="Undergraduate Institution">
                 <input value={form.undergrad_institution ?? ""} onChange={(e) => set("undergrad_institution", e.target.value)} className="input-field" placeholder="e.g. IIT Bombay" />
               </Field>
 
