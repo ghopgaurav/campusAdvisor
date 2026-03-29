@@ -1,92 +1,231 @@
 """
-Reddit search tool.
-Uses Reddit's public JSON search endpoint (no OAuth required for read-only search).
-Targets graduate school / college admission subreddits by default.
+Reddit community search tool.
+
+Searches Reddit via DuckDuckGo's site: filter — no Reddit OAuth or API key needed.
+Results are always tagged with a disclaimer that they are anecdotal/community data.
 """
 
+import asyncio
+import json
 import logging
+import re
 from typing import Any
 
-import httpx
+from ddgs import DDGS
 
 logger = logging.getLogger(__name__)
 
-REDDIT_SEARCH_URL = "https://www.reddit.com/search.json"
+_DISCLAIMER = (
+    "These are community opinions and personal experiences — not official or verified "
+    "information. Individual experiences may vary significantly."
+)
 
-DEFAULT_SUBREDDITS = [
+# Subreddits most relevant to international grad students
+_RELEVANT_SUBREDDITS = [
     "gradadmissions",
+    "MSCS",
     "GradSchool",
+    "IntlStudents",
     "ApplyingToCollege",
+    "csMajors",
     "MBA",
-    "cscareerquestions",
-    "PhD",
+    "immigration",
+    "f1visa",
 ]
 
-HEADERS = {
-    "User-Agent": "CampusCompassBot/1.0 (educational research tool)",
-}
+# Delay to avoid DDG rate-limiting (shared with web_search)
+_SEARCH_DELAY = 1.0
 
-MAX_POSTS = 8
+_REDDIT_URL_RE = re.compile(r"reddit\.com/r/(\w+)/", re.IGNORECASE)
 
 
-async def reddit_search(
-    query: str,
-    subreddits: list[str] | None = None,
-    limit: int = MAX_POSTS,
-    sort: str = "relevance",
-    time_filter: str = "year",
-) -> list[dict[str, Any]]:
-    """
-    Search Reddit for posts matching a query.
+def _extract_subreddit(url: str) -> str | None:
+    """Parse the subreddit name out of a Reddit URL."""
+    m = _REDDIT_URL_RE.search(url)
+    return m.group(1) if m else None
 
-    Args:
-        query: Search query string.
-        subreddits: List of subreddits to restrict search to. Defaults to grad school subs.
-        limit: Max posts to return (Reddit caps at 100).
-        sort: "relevance" | "top" | "new" | "comments"
-        time_filter: "hour" | "day" | "week" | "month" | "year" | "all"
 
-    Returns:
-        List of post dicts with keys: title, url, subreddit, score, num_comments, selftext_preview.
-    """
-    subs = subreddits or DEFAULT_SUBREDDITS
-    restrict_sr = "+".join(subs)
+def _run_ddg_search(query: str, max_results: int) -> list[dict[str, str]]:
+    """Synchronous DDG text search — called via asyncio.to_thread."""
+    results = []
+    with DDGS() as ddgs:
+        for r in ddgs.text(query, max_results=max_results):
+            results.append({
+                "title": r.get("title", ""),
+                "url": r.get("href", ""),
+                "snippet": r.get("body", ""),
+            })
+    return results
 
-    params = {
-        "q": query,
-        "restrict_sr": restrict_sr,
-        "sort": sort,
-        "t": time_filter,
-        "limit": limit,
-        "type": "link",
-    }
 
-    try:
-        async with httpx.AsyncClient(timeout=15.0, headers=HEADERS) as client:
-            resp = await client.get(
-                f"https://www.reddit.com/r/{restrict_sr}/search.json",
-                params=params,
+class RedditSearchTool:
+
+    def __init__(self) -> None:
+        self.relevant_subreddits = _RELEVANT_SUBREDDITS
+
+    async def search_reddit(
+        self,
+        query: str,
+        subreddit: str | None = None,
+        max_results: int = 5,
+    ) -> dict[str, Any]:
+        """
+        Search Reddit for student experiences and discussions.
+        Uses DuckDuckGo with site:reddit.com filter — no OAuth needed.
+
+        Returns structured results always including the community disclaimer.
+        """
+        max_results = min(max_results, 8)
+
+        # Build the site-restricted DDG query
+        if subreddit:
+            ddg_query = f"site:reddit.com/r/{subreddit} {query}"
+        else:
+            # Target the most relevant subreddits with an OR filter
+            sub_filter = " OR ".join(
+                f"r/{s}" for s in self.relevant_subreddits
             )
-            resp.raise_for_status()
-            data = resp.json()
+            ddg_query = f"site:reddit.com ({sub_filter}) {query}"
 
-        posts = []
-        for child in data.get("data", {}).get("children", []):
-            post = child.get("data", {})
-            selftext = post.get("selftext", "")
-            posts.append({
-                "title": post.get("title", ""),
-                "url": f"https://reddit.com{post.get('permalink', '')}",
-                "subreddit": post.get("subreddit", ""),
-                "score": post.get("score", 0),
-                "num_comments": post.get("num_comments", 0),
-                "selftext_preview": selftext[:500] if selftext else "",
-                "created_utc": post.get("created_utc"),
+        logger.info("reddit_search: ddg_query=%r max=%d", ddg_query, max_results)
+
+        await asyncio.sleep(_SEARCH_DELAY)
+
+        try:
+            raw_results = await asyncio.to_thread(_run_ddg_search, ddg_query, max_results)
+        except Exception as exc:
+            logger.warning("DDG reddit search failed (%r): %s — trying simple fallback", ddg_query, exc)
+            # Fallback: plain site:reddit.com without subreddit filter
+            fallback_query = f"site:reddit.com {query}"
+            try:
+                await asyncio.sleep(_SEARCH_DELAY)
+                raw_results = await asyncio.to_thread(_run_ddg_search, fallback_query, max_results)
+            except Exception as exc2:
+                logger.error("Reddit search fallback also failed: %s", exc2)
+                return {
+                    "query": query,
+                    "source": "Reddit (community discussions)",
+                    "disclaimer": _DISCLAIMER,
+                    "results": [],
+                    "total_results": 0,
+                    "error": f"Search failed: {exc2}",
+                }
+
+        # Filter to only Reddit URLs and enrich with subreddit name
+        results = []
+        for r in raw_results:
+            url = r.get("url", "")
+            if "reddit.com" not in url:
+                continue
+            results.append({
+                "title": r["title"],
+                "url": url,
+                "subreddit": _extract_subreddit(url),
+                "snippet": r["snippet"],
             })
 
-        logger.debug("reddit_search(%r) -> %d posts", query, len(posts))
-        return posts
+        # If the subreddit filter was too aggressive and returned nothing, retry simply
+        if not results and subreddit is None:
+            logger.info("Subreddit-filtered search returned 0 Reddit URLs, retrying simply")
+            try:
+                await asyncio.sleep(_SEARCH_DELAY)
+                fallback_results = await asyncio.to_thread(
+                    _run_ddg_search, f"site:reddit.com {query}", max_results
+                )
+                for r in fallback_results:
+                    url = r.get("url", "")
+                    if "reddit.com" not in url:
+                        continue
+                    results.append({
+                        "title": r["title"],
+                        "url": url,
+                        "subreddit": _extract_subreddit(url),
+                        "snippet": r["snippet"],
+                    })
+            except Exception as exc3:
+                logger.warning("Simple reddit fallback failed: %s", exc3)
 
+        logger.info("reddit_search(%r) -> %d results", query, len(results))
+
+        return {
+            "query": query,
+            "source": "Reddit (community discussions)",
+            "disclaimer": _DISCLAIMER,
+            "results": results,
+            "total_results": len(results),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Tool definition for Claude
+# ---------------------------------------------------------------------------
+
+def get_tool_definition() -> dict[str, Any]:
+    sub_list = ", ".join(_RELEVANT_SUBREDDITS)
+    return {
+        "name": "search_student_discussions",
+        "description": (
+            "Search Reddit and student communities for real experiences, opinions, and "
+            "practical advice about US universities, programs, campus life, and cities. "
+            "Returns community discussions — these are personal opinions and anecdotal "
+            "experiences, NOT official data.\n\n"
+            "Good uses:\n"
+            "- 'What is student life like at CMU?'\n"
+            "- 'How hard is it to get an assistantship at Georgia Tech?'\n"
+            "- 'Is X city safe for international students?'\n"
+            "- 'How are job prospects after MS CS from X university?'\n"
+            "- 'What do current students think of X program?'\n\n"
+            "ALWAYS present these results as community opinions, clearly separate from "
+            "official data.\n\n"
+            f"Default subreddits searched: {sub_list}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Search query about student experiences. "
+                        "Be specific about the school, program, or topic."
+                    ),
+                },
+                "subreddit": {
+                    "type": "string",
+                    "description": (
+                        f"Optional: specific subreddit to search. Options: {sub_list}"
+                    ),
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Number of results (default 5, max 8).",
+                },
+            },
+            "required": ["query"],
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Executor — called by the agent's tool dispatcher
+# ---------------------------------------------------------------------------
+
+async def execute(tool_name: str, tool_input: dict[str, Any]) -> str:
+    """Execute search_student_discussions and return JSON string for Claude."""
+    tool = RedditSearchTool()
+    try:
+        result = await tool.search_reddit(
+            query=tool_input["query"],
+            subreddit=tool_input.get("subreddit"),
+            max_results=tool_input.get("max_results", 5),
+        )
     except Exception as exc:
-        logger.warning("reddit_search failed for %r: %s", query, exc)
-        return []
+        logger.exception("Unexpected error in reddit_search execute: %s", exc)
+        result = {
+            "query": tool_input.get("query", ""),
+            "source": "Reddit (community discussions)",
+            "disclaimer": _DISCLAIMER,
+            "results": [],
+            "total_results": 0,
+            "error": f"Reddit search tool failed: {exc}",
+        }
+    return json.dumps(result, default=str)

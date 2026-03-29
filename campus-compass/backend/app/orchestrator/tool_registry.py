@@ -10,7 +10,7 @@ from typing import Any
 from app.config import settings
 from app.tools.cost_of_living import execute as col_execute, get_tool_definition as col_tool_def
 from app.tools.page_fetcher import execute as page_fetcher_execute, get_tool_definition as page_fetcher_tool_def
-from app.tools.reddit_search import reddit_search
+from app.tools.reddit_search import execute as reddit_execute, get_tool_definition as reddit_tool_def
 from app.tools.scorecard import execute as scorecard_execute, get_tool_definitions as scorecard_tool_defs
 from app.tools.web_search import execute as web_search_execute, get_tool_definition as web_search_tool_def
 
@@ -33,46 +33,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     # --- Cost of living ---
     col_tool_def(),
 
-    # --- Reddit search ---
-    {
-        "name": "reddit_search",
-        "description": (
-            "Search Reddit and graduate school forums for real student experiences, opinions, "
-            "and discussions about programs, universities, and the application process. "
-            "Best for 'what's it actually like' questions, acceptance data points, and "
-            "community sentiment."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query (e.g. 'MIT CS PhD acceptance rate 2024').",
-                },
-                "subreddits": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Subreddits to search. Defaults to grad school subs. "
-                        "Options: gradadmissions, GradSchool, ApplyingToCollege, MBA, PhD, cscareerquestions."
-                    ),
-                },
-                "sort": {
-                    "type": "string",
-                    "enum": ["relevance", "top", "new", "comments"],
-                    "description": "Sort order (default: relevance).",
-                    "default": "relevance",
-                },
-                "time_filter": {
-                    "type": "string",
-                    "enum": ["week", "month", "year", "all"],
-                    "description": "Time range filter (default: year).",
-                    "default": "year",
-                },
-            },
-            "required": ["query"],
-        },
-    },
+    # --- Reddit / student discussions ---
+    reddit_tool_def(),
 ]
 
 # ---------------------------------------------------------------------------
@@ -111,14 +73,8 @@ async def dispatch_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
     if tool_name == "get_living_costs":
         return await col_execute(tool_name=tool_name, tool_input=tool_input)
 
-    if tool_name == "reddit_search":
-        result = await reddit_search(
-            query=tool_input["query"],
-            subreddits=tool_input.get("subreddits"),
-            sort=tool_input.get("sort", "relevance"),
-            time_filter=tool_input.get("time_filter", "year"),
-        )
-        return json.dumps(result, default=str)
+    if tool_name == "search_student_discussions":
+        return await reddit_execute(tool_name=tool_name, tool_input=tool_input)
 
     logger.warning("Unknown tool requested: %s", tool_name)
     return json.dumps({"error": f"Unknown tool: {tool_name}"})
