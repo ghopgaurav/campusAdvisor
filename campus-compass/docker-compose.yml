@@ -1,0 +1,38 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8000"
+    healthcheck:
+      # Use Python so we don't need curl installed in the image
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_* vars must be baked in at build time.
+        # The browser reaches the backend directly at localhost:8000, not
+        # through Docker's internal network, so localhost is correct here.
+        NEXT_PUBLIC_API_URL: "http://localhost:8000/api"
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy

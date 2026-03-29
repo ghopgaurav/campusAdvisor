@@ -43,8 +43,8 @@ Thumbs.db
 *.log
 logs/
 
-# Docker
-*.dockerignore
+# Docker (keep .dockerignore files, only ignore generated artifacts)
+*.dockerignore.bak
 
 # Frontend
 frontend/.next/
