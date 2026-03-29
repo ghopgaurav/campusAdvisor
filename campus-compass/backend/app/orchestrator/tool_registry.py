@@ -8,7 +8,7 @@ import logging
 from typing import Any
 
 from app.config import settings
-from app.tools.cost_of_living import get_cost_of_living
+from app.tools.cost_of_living import execute as col_execute, get_tool_definition as col_tool_def
 from app.tools.page_fetcher import execute as page_fetcher_execute, get_tool_definition as page_fetcher_tool_def
 from app.tools.reddit_search import reddit_search
 from app.tools.scorecard import execute as scorecard_execute, get_tool_definitions as scorecard_tool_defs
@@ -31,29 +31,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     web_search_tool_def(),
 
     # --- Cost of living ---
-    {
-        "name": "cost_of_living",
-        "description": (
-            "Look up cost-of-living data for a city: rent, food, transport, and utilities. "
-            "Use this whenever discussing whether a student can afford to live somewhere, "
-            "or when comparing stipends/salaries against local living costs."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "city": {
-                    "type": "string",
-                    "description": "City name (e.g. 'Boston', 'San Francisco').",
-                },
-                "country": {
-                    "type": "string",
-                    "description": "Country name (default 'United States').",
-                    "default": "United States",
-                },
-            },
-            "required": ["city"],
-        },
-    },
+    col_tool_def(),
 
     # --- Reddit search ---
     {
@@ -130,12 +108,8 @@ async def dispatch_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
     if tool_name in _WEB_SEARCH_TOOLS:
         return await web_search_execute(tool_name=tool_name, tool_input=tool_input)
 
-    if tool_name == "cost_of_living":
-        result = await get_cost_of_living(
-            city=tool_input["city"],
-            country=tool_input.get("country", "United States"),
-        )
-        return json.dumps(result, default=str)
+    if tool_name == "get_living_costs":
+        return await col_execute(tool_name=tool_name, tool_input=tool_input)
 
     if tool_name == "reddit_search":
         result = await reddit_search(
